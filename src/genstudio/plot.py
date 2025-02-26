@@ -14,6 +14,7 @@ from genstudio.layout import (
     Hiccup,
     JSCall,
     JSCode,
+    JSExpr,
     JSRef,
     Row,
     ref,
@@ -929,9 +930,19 @@ _Slider = JSRef("Slider")
 
 
 def Slider(
-    key: str,
+    key: Union[str, JSExpr],
     init: Any = None,
-    range: Optional[Union[int, float, List[Union[int, float]]]] = None,
+    range: Optional[Union[int, float, List[Union[int, float]], JSExpr]] = None,
+    rangeFrom: Any = None,
+    fps: Optional[Union[int, str, JSExpr]] = None,
+    step: Union[int, float, JSExpr] = 1,
+    tail: Union[bool, JSExpr] = False,
+    loop: Union[bool, JSExpr] = True,
+    label: Optional[Union[str, JSExpr]] = None,
+    showValue: Union[bool, JSExpr] = False,
+    controls: Optional[Union[List[str], JSExpr, bool]] = None,
+    className: Optional[str] = None,
+    style: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
     """
@@ -957,8 +968,6 @@ def Slider(
     Example:
         >>> Plot.Slider("frame", init=0, range=100, fps=30, label="Frame")
     """
-    rangeFrom = kwargs.get("rangeFrom")
-    tail = kwargs.get("tail")
 
     if range is None and rangeFrom is None:
         raise ValueError("'range', or 'rangeFrom' must be defined")
@@ -974,6 +983,16 @@ def Slider(
         "state_key": key,
         "init": init,
         "range": range,
+        "rangeFrom": rangeFrom,
+        "fps": fps,
+        "step": step,
+        "tail": tail,
+        "loop": loop,
+        "label": label,
+        "showValue": showValue,
+        "controls": controls,
+        "className": className,
+        "style": style,
         "kind": "Slider",
     }
 
@@ -1128,6 +1147,10 @@ def Import(
         exclude: Set of names to exclude when using refer_all
         format: Module format ('esm' or 'commonjs')
 
+    Imported JavaScript code can access:
+    - `genstudio.imports`: Previous imports in the current plot (only for CommonJS imports)
+    - `React`, `d3`, `html` (for hiccup) and `genstudio.api` are defined globally
+
     Examples:
         # CDN import with namespace alias
         >>> Plot.Import(
@@ -1221,6 +1244,7 @@ __all__ = [
     "case",
     "html",
     "md",
+    "JSExpr",
     # ## JavaScript Interop
     "js",
     "ref",

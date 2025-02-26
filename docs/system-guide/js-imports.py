@@ -52,8 +52,8 @@ Plot.Import(
 #
 # ## GenStudio API Access
 # Your JavaScript code can access:
-# - `genstudio.api`: Core utilities like HTML rendering (`html` tagged template), d3, React
 # - `genstudio.imports`: Previous imports in the current plot (only for CommonJS imports)
+# - `React`, `d3`, `html` (for hiccup) and `genstudio.api` are defined globally
 # %%
 import genstudio.plot as Plot
 
