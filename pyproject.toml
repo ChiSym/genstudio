@@ -35,6 +35,7 @@ traitlets = "^5.14.3"
 html2image = "^2.0.4.3"
 orjson = "^3.10.6"
 pillow = "^10.4.0"
+websocket-client = "^1.8.0"
 
 [tool.ruff.lint]
 ignore = [ "E402",]

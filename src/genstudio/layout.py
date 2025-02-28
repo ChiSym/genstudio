@@ -21,8 +21,20 @@ def get_script_content():
     if isinstance(WIDGET_URL, str):  # It's a CDN URL
         return f'import {{ renderData }} from "{WIDGET_URL}";'
     else:  # It's a local Path
+        # Create a blob URL for the module
         with open(WIDGET_URL, "r") as js_file:
-            return js_file.read()
+            content = js_file.read()
+
+        # Time the encoding operation
+        encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        return f"""
+            const encodedContent = "{encoded_content}";
+            const decodedContent = atob(encodedContent);
+            const moduleBlob = new Blob([decodedContent], {{ type: 'text/javascript' }});
+            const moduleUrl = URL.createObjectURL(moduleBlob);
+            const {{ renderData }} = await import(moduleUrl);
+            URL.revokeObjectURL(moduleUrl);
+        """
 
 
 def get_style_content():
@@ -58,7 +70,8 @@ def html_snippet(ast, id=None):
     </script>
 
     <script type="module">
-        {js_content}
+        {js_content};
+
         const container = document.getElementById('{id}');
         const jsonString = container.nextElementSibling.textContent;
         const buffers = {buffers_array}.map(b => Uint8Array.from(atob(b), c => c.charCodeAt(0)));

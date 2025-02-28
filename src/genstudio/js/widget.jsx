@@ -344,6 +344,16 @@ export function StateProvider(data) {
     }
   }, [model, $state]);
 
+  useEffect(() => {
+    if (currentAst) {
+      window.last$state = $state; // exposed for screenshot service
+
+      if (window.__fireWhenReady) {
+        window.__fireWhenReady()
+      }
+    }
+  }, [currentAst])
+
   if (!currentAst) return;
 
   return (
@@ -380,6 +390,14 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// Set up global fireWhenReady promise if not already defined
+if (!window.fireWhenReady) {
+  window.fireWhenReady = new Promise(resolve => {
+    window.__fireWhenReady = resolve;
+  });
+}
+
+// Updated Viewer component with useLayoutEffect to signal readiness
 function Viewer(data) {
   const [el, setEl] = useState();
   const elRef = useCallback((element) => element && setEl(element), [setEl]);
