@@ -238,7 +238,7 @@ class StudioContext(ChromeContext):
             saved_paths.append(out_path)
             if self.debug:
                 print(
-                    f"[StudioContext] Saved image {i+1}/{len(state_updates)} to: {out_path}"
+                    f"[StudioContext] Saved image {i + 1}/{len(state_updates)} to: {out_path}"
                 )
 
         return saved_paths
