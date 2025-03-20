@@ -1,11 +1,11 @@
 import genstudio.plot as Plot
 from genstudio.plot import js
 
-invert = {
+tint = {
     "shader": """
 @group(0) @binding(0) var inputTex: texture_2d<f32>;
 @group(0) @binding(1) var outputTex: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(2) var<uniform> tint: vec4<f32>;
+@group(0) @binding(2) var<uniform> uniforms: vec4<f32>;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -14,10 +14,28 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
     return;
   }
   let srcColor = textureLoad(inputTex, vec2<i32>(gid.xy), 0);
-  // simple invert followed by tinting
-  let invertedColor = vec4<f32>(1.0 - srcColor.r, 1.0 - srcColor.g, 1.0 - srcColor.b, 1.0);
-  let tintedColor = invertedColor * tint;
+  let tint = vec4<f32>(uniforms.x, uniforms.y, uniforms.z, 1.0);
+  let tintedColor = srcColor * tint;
   textureStore(outputTex, vec2<i32>(gid.xy), tintedColor);
+}
+"""
+}
+
+invert = {
+    "shader": """
+@group(0) @binding(0) var inputTex: texture_2d<f32>;
+@group(0) @binding(1) var outputTex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(2) var<uniform> uniforms: vec4<f32>;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let dims = textureDimensions(inputTex);
+  if (gid.x >= dims.x || gid.y >= dims.y) {
+    return;
+  }
+  let srcColor = textureLoad(inputTex, vec2<i32>(gid.xy), 0);
+  let invertedColor = vec4<f32>(1.0 - srcColor.r, 1.0 - srcColor.g, 1.0 - srcColor.b, 1.0);
+  textureStore(outputTex, vec2<i32>(gid.xy), invertedColor);
 }
 """
 }
@@ -39,8 +57,7 @@ fn main(
 ) {
     let dims = textureDimensions(inputTex);
 
-    // Extract tint and block size from uniforms
-    let tint = vec4<f32>(uniforms.x, uniforms.y, uniforms.z, 1.0);
+    // Extract block size from uniforms
     let blockSize = max(2.0, uniforms.w);
 
     // Calculate number of blocks needed to cover the image
@@ -78,7 +95,7 @@ fn main(
 
     // Apply average color to all pixels in this block
     if (count > 0u) {
-        avgColor = (avgColor / f32(count)) * tint;
+        avgColor = avgColor / f32(count);
 
         // Write the averaged color to all pixels in this block
         for (var y = blockY; y < blockEndY; y++) {
@@ -119,7 +136,6 @@ fn main(
 
     // Block size controlled by the slider
     let blockSize = max(2.0, uniforms.w);
-    let tint = vec4<f32>(uniforms.x, uniforms.y, uniforms.z, 1.0);
 
     // First calculate how many blocks we need total to cover the image
     let numBlocksX = ceil(f32(dims.x) / blockSize);
@@ -159,7 +175,7 @@ fn main(
     }
 
     // Calculate the average color for this thread's block
-    let avgColor = (sum / f32(count)) * tint;
+    let avgColor = sum / f32(count);
 
     // Check if this thread is at the top-left of its workgroup (every 16th thread)
     let isWorkgroupTopLeft = (global_id.x % 16u == 0u && global_id.y % 16u == 0u);
@@ -207,13 +223,29 @@ fn main(
                              """,
                 expression=False,
             ),
-            "currentShader": "pixelate",
-            "getCurrentShader": js("() => $state.shaders[$state.currentShader]"),
+            "activeTransforms": [],
             "shaders": {
                 "pixelate": pixelate_by_workgroup,
                 "invert": invert,
                 "workgroup_threads_pixelate": pixelate_by_thread,
+                "tint": tint,
             },
+            "getTransforms": js("""() => {
+                const transforms = [];
+                if ($state.activeTransforms.includes('pixelate')) {
+                    transforms.push($state.shaders.pixelate);
+                }
+                if ($state.activeTransforms.includes('workgroup_threads_pixelate')) {
+                    transforms.push($state.shaders.workgroup_threads_pixelate);
+                }
+                if ($state.activeTransforms.includes('invert')) {
+                    transforms.push($state.shaders.invert);
+                }
+                if ($state.activeTransforms.includes('tint')) {
+                    transforms.push($state.shaders.tint);
+                }
+                return transforms;
+            }"""),
         }
     )
     | [
@@ -224,21 +256,37 @@ fn main(
                 [
                     "button",
                     {
-                        "onClick": js("(e) => { $state.currentShader = 'pixelate'; }"),
+                        "onClick": js("""(e) => {
+                            const transform = 'pixelate';
+                            const idx = $state.activeTransforms.indexOf(transform);
+                            if (idx === -1) {
+                                $state.activeTransforms = [...$state.activeTransforms, transform];
+                            } else {
+                                $state.activeTransforms = $state.activeTransforms.filter(t => t !== transform);
+                            }
+                        }"""),
                         "className": "px-4 py-2 rounded border hover:bg-gray-200 data-[selected=true]:bg-blue-500 data-[selected=true]:text-white",
-                        "data-selected": js("$state.currentShader === 'pixelate'"),
+                        "data-selected": js(
+                            "$state.activeTransforms.includes('pixelate')"
+                        ),
                     },
                     "Pixelate (1 thread per workgroup)",
                 ],
                 [
                     "button",
                     {
-                        "onClick": js(
-                            "(e) => { $state.currentShader = 'workgroup_threads_pixelate'; }"
-                        ),
+                        "onClick": js("""(e) => {
+                            const transform = 'workgroup_threads_pixelate';
+                            const idx = $state.activeTransforms.indexOf(transform);
+                            if (idx === -1) {
+                                $state.activeTransforms = [...$state.activeTransforms, transform];
+                            } else {
+                                $state.activeTransforms = $state.activeTransforms.filter(t => t !== transform);
+                            }
+                        }"""),
                         "className": "px-4 py-2 rounded border hover:bg-gray-200 data-[selected=true]:bg-blue-500 data-[selected=true]:text-white",
                         "data-selected": js(
-                            "$state.currentShader === 'workgroup_threads_pixelate'"
+                            "$state.activeTransforms.includes('workgroup_threads_pixelate')"
                         ),
                     },
                     "Pixelate (16x16 threads per workgroup)",
@@ -246,18 +294,45 @@ fn main(
                 [
                     "button",
                     {
-                        "onClick": js("(e) => { $state.currentShader = 'invert'; }"),
+                        "onClick": js("""(e) => {
+                            const transform = 'invert';
+                            const idx = $state.activeTransforms.indexOf(transform);
+                            if (idx === -1) {
+                                $state.activeTransforms = [...$state.activeTransforms, transform];
+                            } else {
+                                $state.activeTransforms = $state.activeTransforms.filter(t => t !== transform);
+                            }
+                        }"""),
                         "className": "px-4 py-2 rounded border hover:bg-gray-200 data-[selected=true]:bg-blue-500 data-[selected=true]:text-white",
-                        "data-selected": js("$state.currentShader === 'invert'"),
+                        "data-selected": js(
+                            "$state.activeTransforms.includes('invert')"
+                        ),
                     },
                     "Invert",
+                ],
+                [
+                    "button",
+                    {
+                        "onClick": js("""(e) => {
+                            const transform = 'tint';
+                            const idx = $state.activeTransforms.indexOf(transform);
+                            if (idx === -1) {
+                                $state.activeTransforms = [...$state.activeTransforms, transform];
+                            } else {
+                                $state.activeTransforms = $state.activeTransforms.filter(t => t !== transform);
+                            }
+                        }"""),
+                        "className": "px-4 py-2 rounded border hover:bg-gray-200 data-[selected=true]:bg-blue-500 data-[selected=true]:text-white",
+                        "data-selected": js("$state.activeTransforms.includes('tint')"),
+                    },
+                    "Tint",
                 ],
             ],
         ],
         [
             js("WebGPUVideoView"),
             {
-                "transform": js("$state.getCurrentShader()"),
+                "transforms": js("$state.getTransforms()"),
                 "showSourceVideo": True,
                 "uniforms": js(
                     "[$state.tint[0], $state.tint[1], $state.tint[2], $state.pixelBlockSize]"
