@@ -366,40 +366,72 @@ function transformWithDefaults(transform = {}) {
   };
 }
 
-
-function updateComputePipeline(state, transform) {
+function updateComputePipelines(state, transforms) {
   const device = state.device;
   if (!device) return;
 
-  const workgroupSize = transform.workgroupSize || DEFAULTS.workgroupSize;
+  // Create arrays to store pipelines and bind groups
+  const computePipelines = [];
+  const computeBindGroups = [];
+  const intermediateTextures = [];
 
-  const computeModule = device.createShaderModule({
-    code: transform.shader,
+  // Create intermediate textures for each transform except the last one
+  for (let i = 0; i < transforms.length - 1; i++) {
+    const texture = device.createTexture({
+      size: [state.width, state.height],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    });
+    intermediateTextures.push(texture);
+  }
+
+  // Create pipeline and bind group for each transform
+  transforms.forEach((transform, i) => {
+    const workgroupSize = transform.workgroupSize || [16, 16];
+
+    const computeModule = device.createShaderModule({
+      code: transform.shader,
+    });
+
+    const computePipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: {
+        module: computeModule,
+        entryPoint: "main",
+        workgroupSize: { x: workgroupSize[0], y: workgroupSize[1] },
+      },
+    });
+
+    // For each transform, input is either inputTexture (first transform) or previous intermediate texture
+    // Output is either outputTexture (last transform) or next intermediate texture
+    const inputView = i === 0 ?
+      state.inputTexture.createView() :
+      intermediateTextures[i-1].createView();
+
+    const outputView = i === transforms.length - 1 ?
+      state.outputTexture.createView() :
+      intermediateTextures[i].createView();
+
+    const computeBindGroup = device.createBindGroup({
+      layout: computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: inputView },
+        { binding: 1, resource: outputView },
+        { binding: 2, resource: { buffer: state.uniformBuffer } },
+      ],
+    });
+
+    computePipelines.push(computePipeline);
+    computeBindGroups.push(computeBindGroup);
   });
 
-  const computePipeline = device.createComputePipeline({
-    layout: "auto",
-    compute: {
-      module: computeModule,
-      entryPoint: "main",
-      workgroupSize: { x: workgroupSize[0], y: workgroupSize[1] },
-    },
-  });
-
-  const computeBindGroup = device.createBindGroup({
-    layout: computePipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: state.inputTexture.createView() },
-      { binding: 1, resource: state.outputTexture.createView() },
-      { binding: 2, resource: { buffer: state.uniformBuffer } },
-    ],
-  });
-
-  state.computePipeline = computePipeline;
-  state.computeBindGroup = computeBindGroup;
+  // Store in state
+  state.computePipelines = computePipelines;
+  state.computeBindGroups = computeBindGroups;
+  state.intermediateTextures = intermediateTextures;
 }
 
-async function renderFrame(state, transform, width, height) {
+async function renderFrame(state, transforms, width, height) {
   const {
     video,
     videoCanvas,
@@ -409,8 +441,8 @@ async function renderFrame(state, transform, width, height) {
     inputTexture,
     renderPipeline,
     renderBindGroup,
-    computePipeline,
-    computeBindGroup,
+    computePipelines,
+    computeBindGroups,
   } = state;
 
   if (!video || video.readyState < 3 || video.paused) return;
@@ -438,24 +470,24 @@ async function renderFrame(state, transform, width, height) {
   // Encode and submit commands
   const commandEncoder = device.createCommandEncoder();
 
-  const computePass = commandEncoder.beginComputePass();
-  computePass.setPipeline(computePipeline);
-  computePass.setBindGroup(0, computeBindGroup);
+  // Apply each transform in sequence
+  transforms.forEach((transform, i) => {
+    const computePass = commandEncoder.beginComputePass();
+    computePass.setPipeline(computePipelines[i]);
+    computePass.setBindGroup(0, computeBindGroups[i]);
 
-  // Use custom dispatch if provided, otherwise calculate based on dimensions and scale
-  const [wgX, wgY] =
-    transform.customDispatch || [
+    const [wgX, wgY] = transform.customDispatch || [
       Math.ceil(width / (transform.workgroupSize[0] * transform.dispatchScale)),
       Math.ceil(height / (transform.workgroupSize[1] * transform.dispatchScale)),
     ];
 
-  // let's add that: if debugging is enabled, log dispatch workgroup values
-  if (state.debug) {
-    console.log(`[DEBUG] Dispatching workgroups: (${wgX}, ${wgY})`);
-  }
+    if (state.debug) {
+      console.log(`[DEBUG] Transform ${i}: Dispatching workgroups: (${wgX}, ${wgY})`);
+    }
 
-  computePass.dispatchWorkgroups(wgX, wgY);
-  computePass.end();
+    computePass.dispatchWorkgroups(wgX, wgY);
+    computePass.end();
+  });
 
   const view = context.getCurrentTexture().createView();
   const renderPass = commandEncoder.beginRenderPass({
@@ -477,7 +509,7 @@ async function renderFrame(state, transform, width, height) {
 }
 
 export const WebGPUVideoView = ({
-  transform = {},
+  transform = [],  // Now accepts an array of transforms
   width = 640,
   height = 480,
   showSourceVideo = false,
@@ -485,11 +517,13 @@ export const WebGPUVideoView = ({
   debug = false
 }) => {
   const canvasId = React.useId();
-  const workgroupSize = transform.workgroupSize || [8, 8];
   const frameRef = React.useRef(null);
-  transform = transformWithDefaults(transform);
-  const transformRef = React.useRef(transform);
-  transformRef.current = transform;
+
+  // Convert single transform to array if needed
+  const transforms = Array.isArray(transform) ? transform : [transform];
+  transforms = transforms.map(t => transformWithDefaults(t));
+  const transformsRef = React.useRef(transforms);
+  transformsRef.current = transforms;
 
   // Group state for WebGPU and video, including the debug flag
   const webgpuRef = React.useRef({
@@ -502,11 +536,14 @@ export const WebGPUVideoView = ({
     inputTexture: null,
     outputTexture: null,
     sampler: null,
-    computePipeline: null,
-    computeBindGroup: null,
+    computePipelines: [],  // Now an array
+    computeBindGroups: [], // Now an array
+    intermediateTextures: [], // New array for intermediate textures
     renderPipeline: null,
     renderBindGroup: null,
     uniformBuffer: null,
+    width,
+    height,
     debug,
   });
 
@@ -531,11 +568,11 @@ export const WebGPUVideoView = ({
       uniforms,
     })
       .then(() => {
-        // After initial setup, create the compute pipeline from the provided shader.
-        updateComputePipeline(webgpuRef.current, transform);
+        // After initial setup, create the compute pipelines from the provided shaders
+        updateComputePipelines(webgpuRef.current, transforms);
         const animate = () => {
           frameRef.current = requestAnimationFrame(animate);
-          renderFrame(webgpuRef.current, transformRef.current, width, height);
+          renderFrame(webgpuRef.current, transformsRef.current, width, height);
         };
         animate();
       })
@@ -547,22 +584,25 @@ export const WebGPUVideoView = ({
       if (frameRef.current) {
         cancelAnimationFrame(frameRef.current);
       }
-      const { video, inputTexture, outputTexture, uniformBuffer } = webgpuRef.current;
+      const { video, inputTexture, outputTexture, uniformBuffer, intermediateTextures } = webgpuRef.current;
       if (video?.srcObject) {
         video.srcObject.getTracks().forEach((track) => track.stop());
       }
       inputTexture?.destroy();
       outputTexture?.destroy();
       uniformBuffer?.destroy();
+      intermediateTextures?.forEach(texture => texture?.destroy());
     };
   }, [width, height, canvasId]);
 
-  // Update compute pipeline if transform changes without restarting everything
+  // Update compute pipelines if transforms change without restarting everything
   React.useEffect(() => {
     if (webgpuRef.current.device) {
-      updateComputePipeline(webgpuRef.current, transform);
+      // Clean up old intermediate textures
+      webgpuRef.current.intermediateTextures?.forEach(texture => texture?.destroy());
+      updateComputePipelines(webgpuRef.current, transforms);
     }
-  }, [transform.shader, ...workgroupSize]);
+  }, [transforms]);
 
   // Update uniforms on change using helper function
   React.useEffect(() => {
