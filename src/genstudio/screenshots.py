@@ -274,7 +274,7 @@ class StudioContext(ChromeContext):
             saved_paths.append(out_path)
             if self.debug:
                 print(
-                    f"[StudioContext] Saved image {i+1}/{len(state_updates)} to: {out_path}"
+                    f"[StudioContext] Saved image {i + 1}/{len(state_updates)} to: {out_path}"
                 )
 
         return saved_paths
@@ -348,15 +348,15 @@ class StudioContext(ChromeContext):
                 #                   (2) generates a palette from one stream;
                 #                   (3) applies that palette to the other stream;
                 #                   (4) loops infinitely (0) in the final GIF.
-                f"-vf \"split [a][b];[b]palettegen=stats_mode=diff[p];[a][p]paletteuse=new=1\" "
-                f"-c:v gif -loop 0 \"{filename}\""
+                f'-vf "split [a][b];[b]palettegen=stats_mode=diff[p];[a][p]paletteuse=new=1" '
+                f'-c:v gif -loop 0 "{filename}"'
             )
         else:
             # Fallback: generate MP4 video with libx264
             ffmpeg_cmd = (
                 f"ffmpeg {'-v error' if not self.debug else ''} -y "
                 f"-f image2pipe -vcodec png -r {fps} -i - "
-                f"-an -c:v libx264 -pix_fmt yuv420p \"{filename}\""
+                f'-an -c:v libx264 -pix_fmt yuv420p "{filename}"'
             )
 
         if self.debug:
